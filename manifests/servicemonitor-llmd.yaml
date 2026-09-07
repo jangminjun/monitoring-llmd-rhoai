@@ -1,0 +1,35 @@
+# llm-d 컴포넌트(vLLM pod, EPP) 메트릭 스크랩 설정
+#
+# 적용:
+#   oc apply -f manifests/servicemonitor-llmd.yaml -n <llm-d-namespace>
+#
+# selector의 matchLabels는 실제 배포된 vLLM/EPP 서비스 라벨에 맞게 조정하세요.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llmd-vllm-metrics
+  labels:
+    app.kubernetes.io/part-of: llm-d
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: vllm
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llmd-epp-metrics
+  labels:
+    app.kubernetes.io/part-of: llm-d
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: epp
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 15s

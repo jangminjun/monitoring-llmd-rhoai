@@ -1,0 +1,40 @@
+# TTFT / 에러율 임계값 알림 규칙 (가정치 - SLO 확정 전)
+#
+# 적용:
+#   oc apply -f manifests/prometheusrule-llmd-alerts.yaml -n <llm-d-namespace>
+#
+# 실제 서비스 SLO가 확정되면 아래 threshold(2, 0.05)를 갱신하세요.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: llmd-latency-error-alerts
+  labels:
+    app.kubernetes.io/part-of: llm-d
+spec:
+  groups:
+    - name: llmd.ttft
+      rules:
+        - alert: LLMDHighTTFT
+          expr: |
+            histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le)) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "llm-d TTFT p95가 임계값(2초)을 초과했습니다"
+            description: "지난 5분간 TTFT p95가 {{ $value }}초로 임계값 2초를 초과한 상태가 지속되고 있습니다."
+    - name: llmd.error-rate
+      rules:
+        - alert: LLMDHighErrorRate
+          expr: |
+            (
+              sum(rate(vllm:request_failure_total[5m]))
+              /
+              (sum(rate(vllm:request_success_total[5m])) + sum(rate(vllm:request_failure_total[5m])))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "llm-d 요청 에러율이 임계값(5%)을 초과했습니다"
+            description: "지난 5분간 에러율이 {{ $value | humanizePercentage }}로 임계값 5%를 초과한 상태가 지속되고 있습니다."

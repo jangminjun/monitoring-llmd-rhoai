@@ -1,0 +1,15 @@
+# DSCInitialization CR 패치 예시: OpenShift AI 관측성 스택 활성화
+#
+# 적용:
+#   oc patch dscinitialization default-dsci --type merge --patch-file manifests/dsci-observability-patch.yaml
+#
+# 클러스터 버전/RHOAI 버전에 따라 spec.monitoring 하위 필드명이 달라질 수 있으므로
+# 적용 전 `oc explain dscinitialization.spec.monitoring`으로 스키마를 확인하세요.
+apiVersion: dscinitialization.opendatahub.io/v1
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+spec:
+  monitoring:
+    managementState: Managed
+    namespace: openshift-ai-monitoring
