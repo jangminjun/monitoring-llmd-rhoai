@@ -1,35 +1,91 @@
-# llm-d 컴포넌트(vLLM pod, EPP) 메트릭 스크랩 설정
+# 참고: llm-d(LLMInferenceService) 메트릭 스크랩 설정 — 실측 결과 자동 생성됨
 #
-# 적용:
-#   oc apply -f manifests/servicemonitor-llmd.yaml -n <llm-d-namespace>
+# RHOAI 3.4.4에서 `LLMInferenceService` CR을 생성하면, KServe 컨트롤러가 아래와 같은
+# ServiceMonitor/PodMonitor를 **같은 네임스페이스에 자동으로 생성**합니다. 수동으로 이 매니페스트를
+# 적용할 필요가 없습니다 (아래는 실제 배포된 리소스를 그대로 옮겨 적은 검증용 참고 자료입니다).
 #
-# selector의 matchLabels는 실제 배포된 vLLM/EPP 서비스 라벨에 맞게 조정하세요.
+# 검증:
+#   oc get servicemonitor,podmonitor -n <llm-d 네임스페이스>
+#   # 기대: kserve-llm-isvc-scheduler(-default) ServiceMonitor,
+#   #       kserve-llm-isvc-vllm-engine(-default) PodMonitor
+#
+# 참고: 이 클러스터의 qwen25-coder-7b 인스턴스는 llm-d.ai/role=both(단일 워크로드,
+# prefill/decode 미분리)로 배포되어 있어 라우터/스케줄러(EPP) 전용 pod가 따로 뜨지 않습니다.
+# 따라서 kserve-llm-isvc-scheduler ServiceMonitor는 존재하지만 매칭되는 타겟이 없을 수 있습니다 —
+# 이는 결함이 아니라 배포 모드(비분리형) 차이입니다. prefill/decode를 분리 배포해야 EPP 메트릭이 채워집니다.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: llmd-vllm-metrics
+  name: kserve-llm-isvc-scheduler
   labels:
-    app.kubernetes.io/part-of: llm-d
+    app.kubernetes.io/part-of: llminferenceservice
 spec:
+  namespaceSelector: {}
   selector:
     matchLabels:
-      app.kubernetes.io/component: vllm
+      app.kubernetes.io/component: llminferenceservice-router-scheduler
+      app.kubernetes.io/part-of: llminferenceservice
   endpoints:
-    - port: http-metrics
-      path: /metrics
-      interval: 15s
+    - port: metrics
+      authorization:
+        credentials:
+          name: kserve-metrics-reader-sa-secret
+          key: token
+      metricRelabelings:
+        - action: replace
+          sourceLabels: [__name__]
+          targetLabel: __name__
+          replacement: kserve_$1
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          targetLabel: llm_isvc_name
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+          regex: llminferenceservice-(.*)
+          replacement: $1
+          targetLabel: llm_isvc_component
 ---
 apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+kind: PodMonitor
 metadata:
-  name: llmd-epp-metrics
+  name: kserve-llm-isvc-vllm-engine
   labels:
-    app.kubernetes.io/part-of: llm-d
+    app.kubernetes.io/part-of: llminferenceservice
 spec:
+  namespaceSelector: {}
   selector:
     matchLabels:
-      app.kubernetes.io/component: epp
-  endpoints:
-    - port: http-metrics
-      path: /metrics
-      interval: 15s
+      app.kubernetes.io/part-of: llminferenceservice
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - llminferenceservice-workload
+          - llminferenceservice-workload-prefill
+          - llminferenceservice-workload-worker
+          - llminferenceservice-workload-leader
+          - llminferenceservice-workload-leader-prefill
+          - llminferenceservice-workload-worker-prefill
+  podMetricsEndpoints:
+    - targetPort: 8000
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+      metricRelabelings:
+        - action: replace
+          sourceLabels: [__name__]
+          targetLabel: __name__
+          replacement: kserve_$1
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          targetLabel: llm_isvc_name
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_llm_d_ai_role]
+          targetLabel: llm_isvc_role
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+          regex: llminferenceservice-(.*)
+          replacement: $1
+          targetLabel: llm_isvc_component

@@ -11,7 +11,7 @@
       "id": 1,
       "title": "TTFT (p95)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "fieldConfig": {
         "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [
@@ -22,7 +22,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"qwen25-coder-7b\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
           "legendFormat": "TTFT p95",
           "refId": "A"
         }
@@ -32,7 +32,7 @@
       "id": 2,
       "title": "Throughput (req/s)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "fieldConfig": {
         "defaults": { "unit": "reqps" },
@@ -40,7 +40,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(kserve_http_requests_total{namespace=\"qwen25-coder-7b\"}[5m]))",
+          "expr": "sum(rate(kserve_http_requests_total{namespace=\"$namespace\"}[5m]))",
           "legendFormat": "Total requests/s",
           "refId": "A"
         }
@@ -50,7 +50,7 @@
       "id": 3,
       "title": "Error Rate",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "fieldConfig": {
         "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [
@@ -61,8 +61,26 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(kserve_http_requests_total{namespace=\"qwen25-coder-7b\",status=~\"4xx|5xx\"}[5m])) / sum(rate(kserve_http_requests_total{namespace=\"qwen25-coder-7b\"}[5m]))",
+          "expr": "sum(rate(kserve_http_requests_total{namespace=\"$namespace\",status=~\"4xx|5xx\"}[5m])) / sum(rate(kserve_http_requests_total{namespace=\"$namespace\"}[5m]))",
           "legendFormat": "Error rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "KV Cache Usage",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_THANOS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "kserve_vllm:kv_cache_usage_perc{namespace=\"$namespace\"}",
+          "legendFormat": "{{pod}}",
           "refId": "A"
         }
       ]
@@ -71,10 +89,12 @@
   "templating": {
     "list": [
       {
-        "name": "DS_PROMETHEUS",
-        "type": "datasource",
-        "query": "prometheus",
-        "current": {}
+        "name": "namespace",
+        "type": "query",
+        "datasource": "${DS_THANOS}",
+        "query": "label_values(kserve_vllm:request_success_total, namespace)",
+        "refresh": 2,
+        "includeAll": false
       }
     ]
   }

@@ -1,13 +1,24 @@
 # TTFT / 에러율 임계값 알림 규칙 (가정치 - SLO 확정 전)
 #
 # 적용:
-#   oc apply -f manifests/prometheusrule-llmd-alerts.yaml -n <llm-d-namespace>
+#   oc apply -f manifests/prometheusrule-llmd-alerts.yaml -n qwen25-coder-7b
+#
+# 실측(myocp 클러스터, RHOAI 3.4.4, 2026-09-07): 이 클러스터의 llm-d는 KServe `LLMInferenceService`로
+# 배포되며, 메트릭은 `kserve_vllm:...` 접두사를 쓴다 (원래 vLLM 메트릭에 `kserve_` prefix가 relabeling으로
+# 붙음). 별도의 `vllm:request_failure_total` 카운터는 존재하지 않는다.
+#
+# 실제 부하 테스트로 확인한 결과, `kserve_vllm:request_success_total{finished_reason="error"}`는 vLLM
+# 엔진에 요청이 "들어간 뒤" 생성 중 실패한 경우에만 증가한다 (드묾) — 컨텍스트 초과·잘못된 파라미터 등
+# 클라이언트 요청 검증 단계에서 거부된 요청(HTTP 4xx)은 여기에 잡히지 않는다. 대신 이런 요청은
+# `kserve_http_requests_total{status="4xx"}`로 잡힌다. 그래서 에러율은 HTTP status 기준으로 계산한다.
+# 다른 llm-d 인스턴스/네임스페이스에 적용할 때는 `namespace` 라벨 값을 바꾸세요.
 #
 # 실제 서비스 SLO가 확정되면 아래 threshold(2, 0.05)를 갱신하세요.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: llmd-latency-error-alerts
+  namespace: qwen25-coder-7b
   labels:
     app.kubernetes.io/part-of: llm-d
 spec:
@@ -16,7 +27,7 @@ spec:
       rules:
         - alert: LLMDHighTTFT
           expr: |
-            histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le)) > 2
+            histogram_quantile(0.95, sum(rate(kserve_vllm:time_to_first_token_seconds_bucket{namespace="qwen25-coder-7b"}[5m])) by (le)) > 2
           for: 5m
           labels:
             severity: warning
@@ -28,9 +39,9 @@ spec:
         - alert: LLMDHighErrorRate
           expr: |
             (
-              sum(rate(vllm:request_failure_total[5m]))
+              sum(rate(kserve_http_requests_total{namespace="qwen25-coder-7b",status=~"4xx|5xx"}[5m]))
               /
-              (sum(rate(vllm:request_success_total[5m])) + sum(rate(vllm:request_failure_total[5m])))
+              sum(rate(kserve_http_requests_total{namespace="qwen25-coder-7b"}[5m]))
             ) > 0.05
           for: 5m
           labels:

@@ -1,10 +1,24 @@
-# DSCInitialization CR 패치 예시: OpenShift AI 관측성 스택 활성화
+# 참고: DSCInitialization CR의 monitoring 필드 (실측, myocp 클러스터 RHOAI 3.4.4, 2026-09-07)
 #
-# 적용:
+# 이 클러스터에서는 이미 spec.monitoring.managementState가 Managed로 활성화되어 있으므로
+# 아래 패치를 적용할 필요가 없습니다. 그대로 활성화되어 있는지 검증만 하세요:
+#
+#   oc get dsci default-dsci -o yaml
+#
+# 실측된 실제 스키마는 다음과 같습니다 (예상했던 spec.monitoring.namespace: openshift-ai-monitoring은 오류였고
+# 실제로는 redhat-ods-monitoring 입니다):
+#
+#   spec:
+#     monitoring:
+#       managementState: Managed
+#       metrics: {}
+#       namespace: redhat-ods-monitoring
+#
+# 관측성 스택이 비활성화된 새 클러스터에 적용해야 한다면 아래처럼 패치하세요.
+# 클러스터/RHOAI 버전에 따라 하위 필드명이 달라질 수 있으므로 적용 전
+# `oc explain dscinitialization.spec.monitoring`으로 스키마를 확인하세요.
+#
 #   oc patch dscinitialization default-dsci --type merge --patch-file manifests/dsci-observability-patch.yaml
-#
-# 클러스터 버전/RHOAI 버전에 따라 spec.monitoring 하위 필드명이 달라질 수 있으므로
-# 적용 전 `oc explain dscinitialization.spec.monitoring`으로 스키마를 확인하세요.
 apiVersion: dscinitialization.opendatahub.io/v1
 kind: DSCInitialization
 metadata:
@@ -12,4 +26,4 @@ metadata:
 spec:
   monitoring:
     managementState: Managed
-    namespace: openshift-ai-monitoring
+    namespace: redhat-ods-monitoring
