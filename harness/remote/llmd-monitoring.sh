@@ -67,14 +67,25 @@ spec:
 YAML
 
 echo "== Importing Grafana dashboard (llm-d Observability) =="
-jq -n --rawfile dash "$HOME/ocp-install/llmd-observability.json" '
+# The GrafanaDashboard CR's `datasources` input-mapping (by datasource
+# *name*) does not actually resolve to Grafana's real (randomly-generated,
+# changes every cluster rebuild) datasource UID -- confirmed live
+# 2026-09-08: panels stored `"uid": "thanos-querier"` (the name, verbatim)
+# instead of the real uid, and Grafana's /api/ds/query 404s on that ("Data
+# source not found"). The GrafanaDatasource CR publishes the real,
+# currently-live uid at .status.uid, so substitute it into the dashboard
+# JSON ourselves instead of relying on the operator's input mapping.
+THANOS_DS_UID=$(oc get grafanadatasource thanos-querier -n "$MONITORING_NAMESPACE" -o jsonpath='{.status.uid}')
+[ -n "$THANOS_DS_UID" ] || { echo "Could not resolve thanos-querier datasource uid" >&2; exit 1; }
+sed "s/\${DS_THANOS}/${THANOS_DS_UID}/g" "$HOME/ocp-install/llmd-observability.json" > "$HOME/ocp-install/llmd-observability.resolved.json"
+
+jq -n --rawfile dash "$HOME/ocp-install/llmd-observability.resolved.json" '
   {
     apiVersion: "grafana.integreatly.org/v1beta1",
     kind: "GrafanaDashboard",
     metadata: { name: "llmd-observability", namespace: env.MONITORING_NAMESPACE },
     spec: {
       instanceSelector: { matchLabels: { dashboards: "gpu-grafana" } },
-      datasources: [ { inputName: "DS_THANOS", datasourceName: "thanos-querier" } ],
       json: $dash
     }
   }' | oc apply -f -

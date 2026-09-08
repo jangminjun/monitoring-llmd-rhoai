@@ -144,8 +144,21 @@ for _ in $(seq 1 30); do
   sleep 10
 done
 
+echo "=== Jaeger UI route ==="
+# The service's UI port is literally named "jaeger-ui" (not e.g. "16686-tcp")
+# -- `oc expose --port=<name>` needs that exact name or the router 503s with
+# no useful error (confirmed live 2026-09-08: a made-up port name silently
+# produced a route that always 503'd, even though the backend itself
+# answered fine over port-forward).
+if ! oc get route llmd-tracing-jaeger-ui -n "$TRACING_NAMESPACE" &>/dev/null; then
+  oc expose svc/tempo-llmd-tracing-query-frontend -n "$TRACING_NAMESPACE" \
+    --port=jaeger-ui --name=llmd-tracing-jaeger-ui
+  oc patch route llmd-tracing-jaeger-ui -n "$TRACING_NAMESPACE" --type=merge \
+    -p '{"spec":{"tls":{"termination":"edge","insecureEdgeTerminationPolicy":"Redirect"}}}'
+fi
+JAEGER_HOST=$(oc get route llmd-tracing-jaeger-ui -n "$TRACING_NAMESPACE" -o jsonpath='{.spec.host}')
+
 echo ""
 echo "Tracing stack ready. OTLP gRPC ingest (for vLLM --otlp-traces-endpoint):"
 echo "  llmd-tracing-distributor.${TRACING_NAMESPACE}.svc:4317"
-echo "Jaeger UI route: oc get route -n ${TRACING_NAMESPACE} llmd-tracing-query-frontend 2>/dev/null || \\"
-echo "  oc expose svc/tempo-llmd-tracing-query-frontend -n ${TRACING_NAMESPACE} --port=jaeger-ui"
+echo "Jaeger UI: https://${JAEGER_HOST}"

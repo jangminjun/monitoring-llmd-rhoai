@@ -96,3 +96,28 @@ LLMD_NAMESPACE=llmd-scenario14 LLMD_NAME=llmd-latency-demo ./harness.sh scenario
   수정 후 재실행 — 첫 실행은 모든 지표가 `NaN`/0으로 나와서 바로 이상 신호를 알아챌 수 있었음 (데이터가
   하나도 없으면 진단 리포트 자체가 무의미하다는 걸 스스로 드러내는 셈이라, 이런 실패 모드는 오히려
   발견하기 쉬웠다).
+
+## 재검증 (2026-09-08, 하네스를 `openshift-aws-harness` → `monitoring-llmd-rhoai/harness`로 옮긴 뒤)
+
+리포 재구성 후 **이 리포만으로** 처음부터 다시 배포→모니터링 적용→진단까지 실행해서 하네스 이전이
+제대로 됐는지 확인함. 결과:
+
+| 지표 | 1차 실측 | 재검증 |
+|---|---|---|
+| Queue time | 0.285s | 0.285s |
+| Prefill time | 0.289s | 0.285s |
+| **Decode time** | 9.633s | **4.857s** |
+| TTFT | 0.362s | 0.157s |
+| 캐시 히트율 | ~75% | ~75% |
+
+Decode/TTFT 수치가 달라진 건 하네스 이전과는 무관 — 실행 시점의 클러스터 부하(다른 시나리오 동시 실행
+여부), 모델 웜업 상태 등 조건 차이로 자연스러운 변동. **queue/prefill/캐시 히트율이 거의 그대로인 것,
+그리고 decode가 두 번 다 압도적 1위 병목이라는 결론 자체는 재현됨** — 진단 방법론이 안정적이라는 뜻.
+Grafana `llm-d Observability` 대시보드에서도 `/api/ds/query`로 같은 시점 TTFT 값이 실제로 표시되는 것까지
+API 레벨로 확인함(`AGENT.md`/`lessonlearn.md` 참고 — 이 검증 과정에서 대시보드 datasource UID 버그도
+같이 발견/수정됨).
+
+## 현재 상태 (2026-09-08)
+
+`llmd-scenario14/llmd-latency-demo`가 계속 떠 있고 모니터링도 적용됨 — Grafana에서 `llmd-scenario14`
+선택해서 바로 확인 가능. 정리하려면 `./harness.sh scenario14-llmd-latency-stop`.

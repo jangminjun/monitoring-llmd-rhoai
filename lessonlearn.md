@@ -2,6 +2,36 @@
 
 프로젝트 수행 중 발견한 이슈와 원래 가정이 틀렸던 부분을 기록. 시간순 누적, 최신이 위로.
 
+## 2026-09-08 (4) — 하네스 리포 재구성 + UI(Grafana/Jaeger) 접근 검증
+
+1. **GrafanaDashboard CR의 `datasources`(이름 기반) 입력 매핑이 실제로는 안 먹는다.** `datasources:
+   [{ inputName: "DS_THANOS", datasourceName: "thanos-querier" }]`로 지정하면 대시보드 JSON의
+   `${DS_THANOS}`가 datasource **이름 문자열 "thanos-querier"**로 치환되는데, Grafana의 실제 패널
+   렌더링(`/api/ds/query`)은 **UID**를 요구한다 — 이름과 UID는 다른 값이고, UID는 Grafana가 매번 무작위로
+   생성해서 클러스터를 다시 만들 때마다 바뀐다(예전 클러스터 `93691e62-...` → 이번 `ceb9310e-...`). 그
+   결과 대시보드는 "정상 생성"됐다고 나오지만 실제로 열어보면 패널마다 "Data source not found"가 뜨는
+   상태였다. 심지어 기존에 잘 동작한다고 믿었던 Tier1/Tier2 GPU 대시보드도 같은 패턴(`datasource:
+   "thanos-querier"` 문자열)이라 원리적으로는 똑같이 깨져있을 수 있다(재확인 필요).
+   **해결:** `GrafanaDatasource` CR이 실제 UID를 `.status.uid`에 발행해준다 — 이걸 직접 조회해서
+   대시보드 JSON의 `${DS_THANOS}`를 `sed`로 우리가 직접 치환한 뒤 적용하도록 `llmd-monitoring.sh`를
+   고쳤다(더 이상 CR의 `datasources` 매핑에 의존하지 않음). **교훈: 오퍼레이터가 제공하는 "편의
+   기능"(이름→UID 자동 매핑)이 실제로 그 오퍼레이터/버전에서 동작하는지 반드시 API 레벨(`/api/ds/query`)로
+   직접 검증할 것 — "대시보드가 생성됐다"는 "패널에 데이터가 뜬다"의 증거가 아니다.**
+
+2. **Grafana admin 비밀번호는 클러스터마다 랜덤 생성된다** (`oc get secret
+   gpu-grafana-admin-credentials -n gpu-monitoring`) — 예전 클러스터 문서에 있던 `admin/redhat`을 그대로
+   썼다가 401을 받았다. AGENT.md에 하드코딩하지 말고 조회 명령만 남겨둘 것.
+
+3. **Tempo의 Jaeger UI를 Route로 노출하려면 서비스 포트 이름을 정확히 써야 한다** (`jaeger-ui`, 임의로
+   지은 `16686-tcp` 같은 이름 아님) — 틀린 이름으로 `oc expose --port=`를 하면 Route는 만들어지지만
+   백엔드가 실제로는 살아있는데도(`oc port-forward`로는 정상 응답) 라우터가 계속 503을 준다, 에러
+   메시지도 없어서 원인 파악에 시간이 걸렸다. `tracing.sh`에 올바른 포트명으로 Route 생성을 자동화해뒀다.
+
+4. **하네스 리포 재구성:** `openshift-aws-harness`는 기본 클러스터 설치(bastion/OpenShift/GPU/RHOAI/
+   모니터링/로깅)만 담당하도록 되돌리고, MaaS/llm-d 모델 배포/트레이싱/시나리오 11-14는 전부 이 리포의
+   `harness/`로 옮겼다 — 같은 bastion에 SSH로 붙는 방식은 동일(`harness/config.env`의 `BASTION_IP`/
+   `SSH_KEY_PATH`).
+
 ## 2026-09-08 (3) — 시나리오 11/13 실행하며 잡은 것들
 
 1. **`LLMD_EXTRA_VLLM_ARGS`를 세팅해놓고 SSH로 전달을 안 함.** `cmd_scenario13_llmd_tracing_demo`가

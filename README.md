@@ -75,7 +75,7 @@ flowchart LR
 | 11 | [데이터 병렬화(DP)](docs/scenarios/11-data-parallelism.md) | replica 1개 vs N개일 때 처리량이 실제로 스케일되는지 | **실측 완료** — 고정 부하로는 +10%뿐(부하도 같이 늘려야 함, 중요 발견) | `scenario11-llmd-dp-*` |
 | 12 | [장애 및 복구](docs/scenarios/12-failure-recovery.md) | 워크로드 pod가 죽었을 때 요청 실패율(blast radius)과 복구 시간 | **실측 완료** — 복구 384초, 실패는 서버 메트릭에 안 잡힘(중요 발견) | `scenario12-llmd-failure-*` |
 | 13 | [요청 추적(Tracing)](docs/scenarios/13-request-tracing.md) | 요청 하나가 Gateway→EPP→vLLM 어디서 시간을 썼는지 trace로 확인 | **부분 실측** — 파이프라인 검증됨(startup span 확인), 요청단위 trace는 추가 설정 필요 | `scenario13-llmd-tracing-*` |
-| 14 | [지연(delay) 진단](docs/scenarios/14-latency-diagnosis.md) | queue/prefill/decode 중 어디가 병목인지 메트릭으로 구분 | **실측 완료** — decode 9.6s로 단독 병목 확인 | `scenario14-llmd-latency-*` |
+| 14 | [지연(delay) 진단](docs/scenarios/14-latency-diagnosis.md) | queue/prefill/decode 중 어디가 병목인지 메트릭으로 구분 | **실측 완료 + 재검증** — decode가 두 번 다 단독 병목(9.6s/4.9s), 하네스 이전 후에도 재현됨 | `scenario14-llmd-latency-*` |
 | 15 | [텐서 병렬화(TP)](docs/scenarios/15-tensor-parallelism.md) | 멀티GPU 텐서 분할 서빙 | **계획만** (멀티GPU 노드 필요) | 미구현 |
 | 16 | [Expert 병렬화(EP, MoE)](docs/scenarios/16-expert-parallelism.md) | MoE 모델의 expert 분산 | **계획만** (MoE 모델+멀티GPU 필요) | 미구현 |
 
@@ -136,6 +136,18 @@ flowchart LR
 
 실제 실행 결과와 겪었던 이슈는 [docs/test-results-2026-09-07.md](docs/test-results-2026-09-07.md),
 [lessonlearn.md](lessonlearn.md) 참고.
+
+## UI로 보기
+
+CLI 결과 말고 브라우저로 직접 보고 싶으면 (URL은 `AGENT.md` 참고, 클러스터마다 도메인이 다름):
+
+- **Grafana** (`llm-d Observability` 대시보드, namespace 드롭다운으로 시나리오별 전환) —
+  `LLMD_NAMESPACE=<ns> ./harness.sh llmd-monitoring`을 한 번 돌려야 해당 namespace가 드롭다운에 나온다.
+  대시보드 패널이 실제로 데이터를 그리는지는 `/api/ds/query`로 API 레벨까지 검증됨 — 이전에
+  `GrafanaDashboard`의 이름 기반 datasource 매핑이 실제로는 안 먹혀서 패널이 전부 깨져 있던 버그가
+  있었고, 지금은 고쳐져 있다(`lessonlearn.md` 참고).
+- **Jaeger UI** (시나리오 13, 요청 추적) — `./harness.sh tracing`이 Route까지 자동으로 만들어줘서
+  포트포워딩 없이 바로 브라우저로 열림.
 
 ## 디렉터리 구조
 

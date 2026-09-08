@@ -56,9 +56,9 @@ cd monitoring-llmd-rhoai/harness  # 리포 루트 기준
 # 1) OTLP 추적이 켜진 모델 배포 + 샘플 요청 5건 전송
 LLMD_NAMESPACE=llmd-scenario13 LLMD_NAME=llmd-tracing-demo ./harness.sh scenario13-llmd-tracing-demo
 
-# 2) Jaeger UI로 확인 (포트포워딩)
-oc port-forward -n openshift-tempo svc/tempo-llmd-tracing-query-frontend 16686:16686
-# 브라우저에서 http://localhost:16686 → service=llmd-tracing-demo로 검색
+# 2) Jaeger UI로 확인 — `tracing`이 Route를 자동으로 만들어줌, 포트포워딩 불필요
+oc get route llmd-tracing-jaeger-ui -n openshift-tempo -o jsonpath='{.spec.host}'
+# 브라우저에서 https://<위 host>/ → 상단 Service 드롭다운에서 검색 (지금은 unknown_service로 나옴, 아래 참고)
 
 # 3) 정리
 LLMD_NAMESPACE=llmd-scenario13 LLMD_NAME=llmd-tracing-demo ./harness.sh scenario13-llmd-tracing-stop
@@ -114,3 +114,13 @@ LLMD_NAMESPACE=llmd-scenario13 LLMD_NAME=llmd-tracing-demo ./harness.sh scenario
   진짜로 해결됨.
 - 위 GPU 경합 때문에 cluster-autoscaler가 불필요한 GPU 노드를 하나 더 만들었다가(진짜 원인은 "자리
   없음"이 아니라 "예전 pod가 붙잡고 있음"이었음), 원인 해결 후 다시 줄여야 했다.
+- **Jaeger UI Route가 503만 뱉던 문제(2026-09-08 (4)):** `oc expose --port=`에 서비스에 없는 임의 포트
+  이름(`16686-tcp`)을 써서 Route는 생겼지만 라우팅이 안 됐다 — 실제 포트 이름은 `jaeger-ui`. 백엔드
+  자체는 `port-forward`로는 정상 응답해서(200) 원인 찾는 데 시간이 걸렸다. `tracing.sh`가 이제
+  올바른 포트명으로 Route(+edge TLS)를 자동 생성한다 — 위 절차의 "포트포워딩 불필요"가 그 결과.
+
+## 현재 상태 (2026-09-08)
+
+`llmd-scenario13/llmd-tracing-demo`가 계속 떠 있음 — Jaeger UI에서 직접 열어볼 수 있음
+(`oc get route llmd-tracing-jaeger-ui -n openshift-tempo`). 정리하려면
+`./harness.sh scenario13-llmd-tracing-stop`.

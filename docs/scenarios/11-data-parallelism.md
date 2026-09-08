@@ -98,3 +98,11 @@ GPU가 아직 포화 상태가 아니었다면), replica를 늘려도 각 pod가
   GPU 노드를 미리 확보해둘 것.
 - 부하 스크립트의 `"model":"placeholder"` 하드코딩 버그(다른 시나리오와 동일) — 실제 모델명을
   `LLMInferenceService`에서 조회하도록 수정.
+
+## 현재 상태 (2026-09-08)
+
+측정 완료 후 GPU를 다른 시나리오(14)에 돌려주기 위해 **1 replica로 다시 축소**해둠
+(`LLMD_REPLICAS=1 ./harness.sh scenario11-llmd-dp-scale`). `llmd-scenario11/llmd-dp-demo`는 계속 떠
+있어서 Grafana `llm-d Observability` 대시보드에서 `llmd-scenario11`을 선택하면 바로 확인 가능
+(`LLMD_NAMESPACE=llmd-scenario11 ./harness.sh llmd-monitoring` 적용됨). 정리하려면
+`./harness.sh scenario11-llmd-dp-stop`.

@@ -92,3 +92,8 @@ LLMD_NAMESPACE=llmd-scenario12 LLMD_NAME=llmd-failure-demo ./harness.sh scenario
 - replica 2개 이상에서 pod 하나만 죽였을 때 나머지가 트래픽을 흡수하는지 (진짜 무중단인지) 비교
 - prefill/decode 분리 배포에서 decode pod 장애 시 llm-d가 재-prefill을 수행하는지 확인 (공식 문서상
   KV 전송 실패 시 동작 — 우리 환경은 아직 미분리 배포라 검증 못함, 시나리오 15 이후로 연결)
+
+## 현재 상태 (2026-09-08)
+
+측정 완료 후 GPU 확보를 위해 **정리됨** (`./harness.sh scenario12-llmd-failure-stop`). 다시 보려면
+`./harness.sh scenario12-llmd-failure-start`부터 재실행.
