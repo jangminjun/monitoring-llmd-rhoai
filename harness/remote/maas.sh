@@ -98,48 +98,23 @@ YAML
   done
 fi
 
-echo "== Step 2: Authorino TLS =="
-
-if oc get secret authorino-server-cert -n kuadrant-system &>/dev/null; then
-  echo "Authorino TLS secret already exists."
-else
-  # Requires cert-manager (installed as an RHOAI dependency).
-  oc apply -f - <<'YAML'
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: authorino-selfsigned
-  namespace: kuadrant-system
-spec:
-  selfSigned: {}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: authorino-server-cert
-  namespace: kuadrant-system
-spec:
-  secretName: authorino-server-cert
-  isCA: false
-  duration: 8760h
-  renewBefore: 720h
-  issuerRef:
-    name: authorino-selfsigned
-    kind: Issuer
-  commonName: authorino-authorino
-  dnsNames:
-    - authorino-authorino
-    - authorino-authorino.kuadrant-system
-    - authorino-authorino.kuadrant-system.svc
-    - authorino-authorino.kuadrant-system.svc.cluster.local
-  usages:
-    - server auth
-YAML
-  for _ in $(seq 1 10); do
-    oc get secret authorino-server-cert -n kuadrant-system &>/dev/null && break
-    sleep 3
-  done
-fi
+echo "== Step 2: Authorino instance =="
+# Listener TLS deliberately OFF: RHOAI 3.5's aigateway-operator/maas-controller
+# auto-generates an EnvoyFilter (kuadrant-auth-<gateway-name>) that adds a
+# plaintext (no transport_socket) Envoy cluster pointing at
+# authorino-authorino-authorization:50051. An earlier version of this script
+# turned listener.tls on (via a cert-manager cert) here, carried over from an
+# RHOAI 3.3/3.4-era setup guide -- on 3.5 that makes Authorino refuse the
+# plaintext connection the generated EnvoyFilter actually makes, so EVERY
+# request through the MaaS gateway fails with a generic 500 and zero log
+# lines on the Authorino/Limitador side (the gRPC call dies at the TLS
+# handshake before reaching either). Confirmed fixed by leaving TLS off here
+# -- see docs/scenarios/17-maas-external-oidc-auth.md "6) 근본 원인 확정" in
+# the openshift-ai-maas-demo repo for the full trace. If a future RHOAI
+# version's generated EnvoyFilter switches back to TLS for this cluster,
+# this needs revisiting (check with: oc get envoyfilter
+# kuadrant-auth-<gateway-name> -n openshift-ingress -o yaml, look for
+# transport_socket on the authorino-authorino-authorization cluster patch).
 
 oc apply -f - <<'YAML'
 apiVersion: operator.authorino.kuadrant.io/v1beta1
@@ -152,35 +127,46 @@ spec:
   clusterWide: true
   listener:
     tls:
-      enabled: true
-      certSecretRef:
-        name: authorino-server-cert
+      enabled: false
   oidcServer:
     tls:
       enabled: false
 YAML
 
-oc annotate svc/authorino-authorino-authorization \
-  service.beta.openshift.io/serving-cert-secret-name=authorino-server-cert \
-  -n kuadrant-system --overwrite 2>/dev/null || true
+echo "== Step 3: Enable AI Gateway / modelsAsAService in DataScienceCluster =="
+# RHOAI 3.5+: spec.components.kserve.modelsAsService is deprecated in favor of
+# the new top-level spec.components.aigateway.modelsAsAService (note the
+# "AsA" spelling -- matches the ai-gateway-operator CRD field name, confirmed
+# via `oc explain datasciencecluster.spec.components.aigateway.modelsAsAService`,
+# not a typo). Setting the old field errors: "modelsAsService is deprecated;
+# cannot re-enable once Removed." On RHOAI 3.3/3.4 the old field is still what
+# exists -- this harness targets 3.5+ per AGENT.md, so only the new path is
+# implemented here.
 
-echo "== Step 3: Enable modelsAsService in DataScienceCluster =="
-
-current_state=$(oc get datasciencecluster default-dsc -o jsonpath='{.spec.components.kserve.modelsAsService.managementState}' 2>/dev/null || echo "")
+current_state=$(oc get datasciencecluster default-dsc -o jsonpath='{.spec.components.aigateway.modelsAsAService.managementState}' 2>/dev/null || echo "")
 if [ "$current_state" = "Managed" ]; then
-  echo "modelsAsService already Managed."
+  echo "aigateway.modelsAsAService already Managed."
 else
   oc patch datasciencecluster default-dsc --type=merge -p '{
-    "spec": {"components": {"kserve": {"modelsAsService": {"managementState": "Managed"}}}}
+    "spec": {"components": {"aigateway": {"managementState": "Managed", "modelsAsAService": {"managementState": "Managed"}}}}
   }'
   echo "Waiting 30s for DataScienceCluster to reconcile..."
   sleep 30
 fi
 
-echo "== Step 4: Inference GatewayClass/Gateway =="
-# RHOAI's own controller may already create a MaaS gateway once
-# modelsAsService is Managed (observed as maas-default-gateway on some
-# versions) — these are additive and only created if missing.
+echo "== Step 4: Inference GatewayClass/Gateway(s) =="
+# RHOAI 3.5's maas-controller does NOT auto-create its Gateway -- it explicitly
+# refuses to reconcile until one named exactly "maas-default-gateway" exists in
+# openshift-ingress ("the Gateway must be created by a network or cluster
+# administrator before AITenant can be provisioned", confirmed from
+# maas-controller logs / AIGateway status conditions). This is a *separate*
+# Gateway object from openshift-ai-inference below -- both are needed.
+#
+# Also: "default-gateway-tls" (the cert this script used to reference) does not
+# exist on a fresh cluster -- there's nothing that creates it. Using the
+# cluster's own default ingress router cert (router-certs-default, already in
+# openshift-ingress) instead avoids needing a separate cert-manager Certificate
+# for this.
 
 CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
 
@@ -218,9 +204,94 @@ spec:
         certificateRefs:
           - group: ''
             kind: Secret
-            name: default-gateway-tls
+            name: router-certs-default
         mode: Terminate
 YAML
+fi
+
+if oc get gateway maas-default-gateway -n openshift-ingress &>/dev/null; then
+  echo "Gateway maas-default-gateway already exists."
+else
+  oc apply -f - <<YAML
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  labels:
+    istio.io/rev: openshift-gateway
+  name: maas-default-gateway
+  namespace: openshift-ingress
+spec:
+  gatewayClassName: openshift-ai-inference
+  listeners:
+    - allowedRoutes:
+        namespaces:
+          from: All
+      hostname: maas.${CLUSTER_DOMAIN}
+      name: https
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - group: ''
+            kind: Secret
+            name: router-certs-default
+        mode: Terminate
+YAML
+fi
+
+echo "== Step 4b: MaaS API database =="
+# RHOAI 3.5's maas-api component needs its own Postgres -- nothing provisions
+# one automatically. Ephemeral single-pod instance, demo/test only (same
+# pattern as this repo's other harness for Keycloak's DB) -- not HA, data lost
+# on pod restart.
+oc get namespace redhat-ai-gateway-infra &>/dev/null || oc create namespace redhat-ai-gateway-infra
+
+if oc get secret maas-db-config -n redhat-ai-gateway-infra &>/dev/null; then
+  echo "maas-db-config already exists."
+else
+  DB_PASSWORD=$(openssl rand -hex 16)
+  oc create secret generic maas-postgres-creds -n redhat-ai-gateway-infra \
+    --from-literal=username=maas --from-literal=password="$DB_PASSWORD" \
+    --dry-run=client -o yaml | oc apply -f -
+  oc apply -f - <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maas-db
+  namespace: redhat-ai-gateway-infra
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: maas-db}
+  template:
+    metadata:
+      labels: {app: maas-db}
+    spec:
+      containers:
+        - name: postgres
+          image: registry.redhat.io/rhel9/postgresql-15:latest
+          env:
+            - {name: POSTGRESQL_USER, valueFrom: {secretKeyRef: {name: maas-postgres-creds, key: username}}}
+            - {name: POSTGRESQL_PASSWORD, valueFrom: {secretKeyRef: {name: maas-postgres-creds, key: password}}}
+            - {name: POSTGRESQL_DATABASE, value: maasdb}
+          ports: [{containerPort: 5432}]
+          volumeMounts: [{name: data, mountPath: /var/lib/pgsql/data}]
+      volumes: [{name: data, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maas-db
+  namespace: redhat-ai-gateway-infra
+spec:
+  selector: {app: maas-db}
+  ports: [{port: 5432, targetPort: 5432}]
+YAML
+  echo "Waiting for maas-db to be ready (up to 2m)..."
+  oc rollout status deployment/maas-db -n redhat-ai-gateway-infra --timeout=120s
+  oc create secret generic maas-db-config -n redhat-ai-gateway-infra \
+    --from-literal=DB_CONNECTION_URL="postgresql://maas:${DB_PASSWORD}@maas-db.redhat-ai-gateway-infra.svc:5432/maasdb" \
+    --dry-run=client -o yaml | oc apply -f -
 fi
 
 echo "== Step 5: Dashboard MaaS features =="
@@ -233,6 +304,24 @@ echo "== Step 6: Restart controllers to pick up the new config =="
 oc delete pod -n redhat-ods-applications -l app=odh-model-controller --ignore-not-found=true
 oc delete pod -n redhat-ods-applications -l control-plane=kserve-controller-manager --ignore-not-found=true
 sleep 10
+
+echo "== Step 7: Protect maas-default-gateway from odh-model-controller policy takeover =="
+# The moment any LLMInferenceService is deployed, odh-model-controller's
+# "gateway-auth-bootstrap" sub-controller creates its OWN AuthPolicy
+# (<gateway>-authn) targeting this same Gateway -- Kuadrant's policy
+# conflict resolution then makes that one "Enforced" and demotes this
+# MaaS-managed AuthPolicy to "Overridden", silently dropping any custom
+# identity sources (e.g. external OIDC) added on top of it. This annotation
+# tells that controller to leave this Gateway's policies alone. Confirmed
+# live: with this set, odh-model-controller deletes its own competing
+# AuthPolicy instead of creating/keeping one. See
+# docs/scenarios/17-maas-external-oidc-auth.md section 7 in
+# openshift-ai-maas-demo for the full trace (including the controller's own
+# log lines proving this).
+oc annotate gateway maas-default-gateway -n openshift-ingress \
+  opendatahub.io/managed="false" \
+  security.opendatahub.io/authorino-tls-bootstrap="true" \
+  --overwrite
 
 echo ""
 echo "MaaS setup complete."
